@@ -203,3 +203,126 @@ The next phase involves implementing the logic to automatically populate these a
 > 🔍 **Best Practice**: Consider implementing this logic at a lower level (like a base repository or through EF Core interceptors) to ensure consistent auditing across all entities.
 
 This documentation will be expanded to include the implementation details of audit value assignment in the next section.
+
+
+# Implementing Automatic Audit Trail in Entity Framework Core
+
+## Overview
+This guide explains how to implement automatic audit trail tracking in Entity Framework Core by overriding the `SaveChangesAsync` method in your `DbContext`. This approach automatically captures who created or modified records and when these changes occurred.
+
+## Implementation
+
+Here's how we implement automatic audit tracking in our `ApplicationDbContext`:
+
+```csharp
+public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public ApplicationDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        IHttpContextAccessor httpContextAccessor) 
+        : base(options)
+    {
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    public DbSet<Poll> Polls { get; set; }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        // Get all entities being tracked that inherit from AuditableEntity
+        var entries = ChangeTracker.Entries<AuditableEntity>();
+
+        foreach (var entityEntry in entries)
+        {
+            // Get the current user's ID from the HTTP context
+            var currentUserId = _httpContextAccessor.HttpContext?.User
+                .FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+            if (entityEntry.State == EntityState.Added)
+            {
+                // Set audit properties for new entities
+                entityEntry.Property(x => x.CreatedById).CurrentValue = currentUserId;
+                entityEntry.Property(x => x.CreatedOn).CurrentValue = DateTime.UtcNow;
+            }
+            else if (entityEntry.State == EntityState.Modified)
+            {
+                // Set audit properties for modified entities
+                entityEntry.Property(x => x.UpdatedById).CurrentValue = currentUserId;
+                entityEntry.Property(x => x.UpdatedOn).CurrentValue = DateTime.UtcNow;
+            }
+        }
+
+        return base.SaveChangesAsync(cancellationToken);
+    }
+}
+```
+
+## Understanding the Current User ID Retrieval
+
+Let's break down this crucial line of code:
+
+```csharp
+var currentUserId = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+```
+
+This line is composed of several parts:
+
+1. `_httpContextAccessor`: An interface that provides access to the current HTTP context
+2. `.HttpContext?`: Safely accesses the current HTTP context (null if no HTTP context exists)
+3. `.User`: Accesses the ClaimsPrincipal object representing the current user
+4. `.FindFirstValue(ClaimTypes.NameIdentifier)`: Searches for and returns the value of the first claim of type "NameIdentifier"
+5. `!`: Null-forgiving operator indicating we expect this value to be non-null
+
+Here's a visual representation of the process:
+
+```mermaid
+flowchart LR
+    A[HTTP Request] --> B[HttpContextAccessor]
+    B --> C[HttpContext]
+    C --> D[User/ClaimsPrincipal]
+    D --> E[Claims Collection]
+    E --> F[NameIdentifier Claim]
+    F --> G[User ID]
+```
+
+## How It Works
+
+1. **Entity Tracking**:
+   - The `ChangeTracker.Entries<AuditableEntity>()` method returns only entities that inherit from `AuditableEntity`
+   - This ensures we only process entities that need audit information
+
+2. **State Detection**:
+   - For new entities (`EntityState.Added`):
+     ```csharp
+     entityEntry.Property(x => x.CreatedById).CurrentValue = currentUserId;
+     entityEntry.Property(x => x.CreatedOn).CurrentValue = DateTime.UtcNow;
+     ```
+   - For modified entities (`EntityState.Modified`):
+     ```csharp
+     entityEntry.Property(x => x.UpdatedById).CurrentValue = currentUserId;
+     entityEntry.Property(x => x.UpdatedOn).CurrentValue = DateTime.UtcNow;
+     ```
+
+3. **Automatic Tracking**:
+   - This implementation requires no explicit calls to set audit properties
+   - Works automatically whenever `SaveChangesAsync` is called
+   - Maintains consistency across all database operations
+
+## Important Considerations
+
+1. **User Context**:
+   - The implementation assumes the user is authenticated
+   - The HTTP context must be available
+   - The user must have a valid NameIdentifier claim
+
+2. **UTC Time**:
+   - All timestamps are stored in UTC (DateTime.UtcNow)
+   - This ensures consistent time tracking across different time zones
+
+3. **Null Safety**:
+   - The code uses null-conditional operators (?.) for safe navigation
+   - The null-forgiving operator (!) should be used carefully and with confidence that the value won't be null
+
+Understanding this implementation helps ensure proper audit trailing throughout your application while maintaining clean and maintainable code.
