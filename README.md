@@ -326,3 +326,141 @@ flowchart LR
    - The null-forgiving operator (!) should be used carefully and with confidence that the value won't be null
 
 Understanding this implementation helps ensure proper audit trailing throughout your application while maintaining clean and maintainable code.
+
+
+
+# Modifying API Controller Response with Mapster
+
+## Overview
+This guide explains how to modify an API controller's Add endpoint to return a specific response type using Mapster for object mapping, rather than exposing domain models directly in the API response.
+
+## Implementation
+
+Here's the modified controller endpoint:
+
+```csharp
+[HttpPost("")]
+public async Task<IActionResult> Add(
+    [FromBody] PollRequest request,
+    CancellationToken cancellationToken)
+{
+    // Transform request DTO to domain model
+    var pollToCreate = request.Adapt<Poll>();
+
+    // Create new poll in database
+    var createdPoll = await _pollService.AddAsync(pollToCreate, cancellationToken);
+
+    // Transform domain model to response DTO and return
+    return CreatedAtAction(
+        actionName: nameof(Get),
+        routeValues: new { id = createdPoll.Id },
+        value: createdPoll.Adapt<PollResponse>()
+    );
+}
+```
+
+## Data Flow
+The data transformation process follows a clear path through the system:
+
+```mermaid
+flowchart LR
+    A[Client Request] -->|Deserialize| B[PollRequest DTO]
+    B -->|Adapt to| C[Poll Domain Model]
+    C -->|Save to DB| D[Saved Poll Entity]
+    D -->|Adapt to| E[PollResponse DTO]
+    E -->|Serialize| F[HTTP Response]
+```
+
+## Understanding the Response
+
+When the endpoint is called, it returns an HTTP response with:
+1. Status code 201 (Created)
+2. Location header pointing to the new resource
+3. Response body containing the mapped PollResponse
+
+Example HTTP Response:
+```http
+HTTP/1.1 201 Created
+Location: /api/polls/123
+Content-Type: application/json
+
+{
+    "id": 123,
+    "title": "Sample Poll",
+    "summary": "Poll description",
+    // Other fields defined in PollResponse
+}
+```
+
+## Benefits of This Approach
+
+### 1. Separation of Concerns
+- Domain models remain isolated from API contracts
+- Changes to internal models don't necessarily affect API consumers
+- Better control over what data is exposed
+
+### 2. API Contract Management
+- Clear, documented API responses
+- Consistent response structure
+- Ability to version API responses independently of domain models
+
+### 3. Security
+- Prevents accidental exposure of sensitive data
+- Allows fine-grained control over exposed properties
+- Reduces attack surface by limiting exposed information
+
+## Code Breakdown
+
+Let's examine each part of the implementation:
+
+1. **Request Processing**:
+```csharp
+var pollToCreate = request.Adapt<Poll>();
+```
+Transforms the incoming DTO into our domain model, mapping only the properties we need for creation.
+
+2. **Service Call**:
+```csharp
+var createdPoll = await _pollService.AddAsync(pollToCreate, cancellationToken);
+```
+Handles the actual business logic and database operation.
+
+3. **Response Creation**:
+```csharp
+return CreatedAtAction(
+    actionName: nameof(Get),
+    routeValues: new { id = createdPoll.Id },
+    value: createdPoll.Adapt<PollResponse>()
+);
+```
+Creates a REST-compliant response with:
+- The correct HTTP status code
+- A Location header for resource retrieval
+- A transformed response body
+
+## Best Practices
+
+1. **Model Mapping**:
+   - Define clear mapping configurations
+   - Keep DTOs focused on their specific use cases
+   - Validate incoming data before mapping
+
+2. **Response Structure**:
+   - Keep responses consistent across endpoints
+   - Include only necessary data
+   - Document response structures in API documentation
+
+3. **Error Handling**:
+   - Add appropriate try-catch blocks
+   - Return proper error responses
+   - Log mapping failures for debugging
+
+## Next Steps
+Consider implementing:
+1. Response type validation
+2. Custom mapping configurations
+3. API versioning support
+4. Response compression
+5. Caching headers
+
+This implementation provides a solid foundation for building maintainable and secure API endpoints while following REST best practices.
